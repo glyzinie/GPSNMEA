@@ -1,4 +1,4 @@
-#include "GPSUtils.h"
+#include "GPSUtils.hpp"
 #include <stdlib.h>
 
 int gpsFromHex(char a) {

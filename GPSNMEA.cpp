@@ -1,5 +1,5 @@
-#include "GPSNMEA.h"
-#include "GPSUtils.h"
+#include "GPSNMEA.hpp"
+#include "GPSUtils.hpp"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -15,11 +15,9 @@ GPSNMEA::GPSNMEA()
 	encodedCharCount(0),
 	sentencesWithFixCount(0),
 	failedChecksumCount(0),
-	passedChecksumCount(0)
-#if ENABLE_CUSTOM_FIELDS
-	, customElts(NULL),
+	passedChecksumCount(0),
+	customElts(NULL),
 	customCandidates(NULL)
-#endif
 {
 	termBuffer[0] = '\0';
 }
@@ -31,10 +29,8 @@ void GPSNMEA::reset() {
 	sentenceHasFix = false;
 	encodedCharCount = sentencesWithFixCount = failedChecksumCount = passedChecksumCount = 0;
 	termBuffer[0] = '\0';
-#if ENABLE_CUSTOM_FIELDS
 	customElts = NULL;
 	customCandidates = NULL;
-#endif
 }
 
 bool GPSNMEA::encode(char c) {
@@ -117,13 +113,11 @@ bool GPSNMEA::endOfTermHandler() {
 				default:
 					break;
 			}
-#if ENABLE_CUSTOM_FIELDS
 			for (GPSCustom *p = customCandidates;
 			p != NULL && strcmp(p->sentenceName, customCandidates->sentenceName) == 0;
 			p = p->next) {
 				p->commit();
 			}
-#endif
 			return true;
 		} else {
 			failedChecksumCount++;
@@ -144,14 +138,12 @@ bool GPSNMEA::endOfTermHandler() {
 		} else {
 			curSentenceType = SentenceType_Other;
 		}
-#if ENABLE_CUSTOM_FIELDS
 		for (customCandidates = customElts; customCandidates != NULL &&
 			strcmp(customCandidates->sentenceName, termBuffer) < 0;
 			customCandidates = customCandidates->next);
 		if (customCandidates != NULL && strcmp(customCandidates->sentenceName, termBuffer) > 0) {
 			customCandidates = NULL;
 		}
-#endif
 		return false;
 	}
 
@@ -223,7 +215,6 @@ bool GPSNMEA::endOfTermHandler() {
 		}
 	}
 
-#if ENABLE_CUSTOM_FIELDS
 	for (GPSCustom *p = customCandidates;
 	p != NULL && strcmp(p->sentenceName, customCandidates->sentenceName) == 0 &&
 	p->termNumber <= curTermNumber;
@@ -232,7 +223,6 @@ bool GPSNMEA::endOfTermHandler() {
 			p->set(termBuffer);
 		}
 	}
-#endif
 	return false;
 }
 
@@ -340,9 +330,8 @@ void GPSInteger::commit() {
 }
 
 //
-// GPSCustom の実装（ENABLE_CUSTOM_FIELDS==1 の場合のみ）
+// GPSCustom の実装
 //
-#if ENABLE_CUSTOM_FIELDS
 GPSCustom::GPSCustom(GPSNMEA &gps, const char *sentenceName, int termNumber) {
 	begin(gps, sentenceName, termNumber);
 }
@@ -363,12 +352,10 @@ void GPSCustom::commit() {
 void GPSCustom::set(const char *term) {
 	strncpy(stagingBuffer, term, sizeof(stagingBuffer) - 1);
 }
-#endif
 
 //
-// GPSNMEA 内部：カスタムフィールド登録（ENABLE_CUSTOM_FIELDS==1 の場合のみ）
+// GPSNMEA 内部：カスタムフィールド登録
 //
-#if ENABLE_CUSTOM_FIELDS
 void GPSNMEA::insertCustom(GPSCustom *pElt, const char *sentenceName, int termNumber) {
 	GPSCustom **ppElt;
 	for (ppElt = &customElts; *ppElt != NULL; ppElt = &((*ppElt)->next)) {
@@ -379,4 +366,3 @@ void GPSNMEA::insertCustom(GPSCustom *pElt, const char *sentenceName, int termNu
 	pElt->next = *ppElt;
 	*ppElt = pElt;
 }
-#endif
