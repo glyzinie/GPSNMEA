@@ -1,8 +1,10 @@
 #include "GPSNMEA.hpp"
 #include "GPSUtils.hpp"
-#include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
+#include <Arduino.h>
+#include <cstdlib>
+#include <cstring>
+#include <cctype>
+#include <cmath>
 
 // コンストラクタ
 GPSNMEA::GPSNMEA()
@@ -16,10 +18,35 @@ GPSNMEA::GPSNMEA()
 	sentencesWithFixCount(0),
 	failedChecksumCount(0),
 	passedChecksumCount(0),
-	customElts(NULL),
-	customCandidates(NULL)
+	customElts(nullptr),
+	customCandidates(nullptr)
 {
 	termBuffer[0] = '\0';
+	// 初期化：GSA
+	gsa.mode = '\0';
+	gsa.fixType = 0;
+	for (int i = 0; i < 12; i++) {
+		gsa.satPrn[i] = 0;
+	}
+	gsa.pdop = gsa.hdop = gsa.vdop = 0.0;
+	gsa.valid = false;
+	// 初期化：GSV
+	gsv.totalMessages = 0;
+	gsv.messageNumber = 0;
+	gsv.satellitesInView = 0;
+	for (int i = 0; i < 4; i++) {
+		gsv.satellites[i].prn = 0;
+		gsv.satellites[i].elevation = 0;
+		gsv.satellites[i].azimuth = 0;
+		gsv.satellites[i].snr = 0;
+	}
+	gsv.valid = false;
+	// 初期化：VTG
+	vtg.trueTrack = 0.0;
+	vtg.magneticTrack = 0.0;
+	vtg.speedKnots = 0.0;
+	vtg.speedKmph = 0.0;
+	vtg.valid = false;
 }
 
 void GPSNMEA::reset() {
@@ -29,8 +56,12 @@ void GPSNMEA::reset() {
 	sentenceHasFix = false;
 	encodedCharCount = sentencesWithFixCount = failedChecksumCount = passedChecksumCount = 0;
 	termBuffer[0] = '\0';
-	customElts = NULL;
-	customCandidates = NULL;
+	customElts = nullptr;
+	customCandidates = nullptr;
+	// リセット：GSA, GSV, VTG
+	gsa.valid = false;
+	gsv.valid = false;
+	vtg.valid = false;
 }
 
 bool GPSNMEA::encode(char c) {
@@ -39,7 +70,7 @@ bool GPSNMEA::encode(char c) {
 	switch(c) {
 		case ',':
 			if (!isChecksumTerm) {
-				parity ^= (uint8_t)c;
+				parity ^= static_cast<uint8_t>(c);
 			}
 		// FALLTHROUGH
 		case '\r':
@@ -69,7 +100,7 @@ bool GPSNMEA::encode(char c) {
 				termBuffer[curTermOffset++] = c;
 			}
 			if (!isChecksumTerm) {
-				parity ^= c;
+				parity ^= static_cast<uint8_t>(c);
 			}
 			return false;
 		}
@@ -83,7 +114,8 @@ int GPSNMEA::fromHex(char a) {
 
 bool GPSNMEA::endOfTermHandler() {
 	if (isChecksumTerm) {
-		byte chksum = 16 * fromHex(termBuffer[0]) + fromHex(termBuffer[1]);
+		// チェックサム計算: termBuffer の先頭2文字を使用
+		uint8_t chksum = 16 * fromHex(termBuffer[0]) + fromHex(termBuffer[1]);
 		if (chksum == parity) {
 			passedChecksumCount++;
 			if (sentenceHasFix) {
@@ -98,24 +130,31 @@ bool GPSNMEA::endOfTermHandler() {
 					if (sentenceHasFix) {
 						location.commit();
 					}
-					speed.commit();   // RMC の速度
-					course.commit();  // RMC の航向
+					speed.commit();
+					course.commit();
 					break;
 				case SentenceType_GGA:
 					time.commit();
 					if (sentenceHasFix) {
 						location.commit();
 					}
-					satellites.commit();  // GGA の衛星数
-					hdop.commit();        // GGA のHDOP
-					altitude.commit();    // GGA の標高
+					satellites.commit();
+					hdop.commit();
+					altitude.commit();
+					break;
+				case SentenceType_GSA:
+					gsa.valid = true;
+					break;
+				case SentenceType_GSV:
+					gsv.valid = true;
+					break;
+				case SentenceType_VTG:
+					vtg.valid = true;
 					break;
 				default:
 					break;
 			}
-			for (GPSCustom *p = customCandidates;
-			p != NULL && strcmp(p->sentenceName, customCandidates->sentenceName) == 0;
-			p = p->next) {
+			for (GPSCustom *p = customCandidates; p != nullptr && strcmp(p->sentenceName, customCandidates->sentenceName) == 0; p = p->next) {
 				p->commit();
 			}
 			return true;
@@ -126,25 +165,30 @@ bool GPSNMEA::endOfTermHandler() {
 	}
 
 	if (curTermNumber == 0) {
-		// 文識別子の判定
-		if ((strchr("GB", termBuffer[0]) != NULL) &&
-			(strchr("PNABLD", termBuffer[1]) != NULL) &&
-			(strcmp(termBuffer + 2, "RMC") == 0)) {
-			curSentenceType = SentenceType_RMC;
-		} else if ((strchr("GB", termBuffer[0]) != NULL) &&
-			(strchr("PNABLD", termBuffer[1]) != NULL) &&
-			(strcmp(termBuffer + 2, "GGA") == 0)) {
-			curSentenceType = SentenceType_GGA;
-		} else {
-			curSentenceType = SentenceType_Other;
+		// 文識別子の判定（GSA, GSV, VTG を追加）
+		if ((strchr("GB", termBuffer[0]) != nullptr) &&
+			(strchr("PNABLD", termBuffer[1]) != nullptr)) {
+			if (strcmp(termBuffer + 2, "RMC") == 0) {
+				curSentenceType = SentenceType_RMC;
+			} else if (strcmp(termBuffer + 2, "GGA") == 0) {
+				curSentenceType = SentenceType_GGA;
+			} else if (strcmp(termBuffer + 2, "GSA") == 0) {
+				curSentenceType = SentenceType_GSA;
+			} else if (strcmp(termBuffer + 2, "GSV") == 0) {
+				curSentenceType = SentenceType_GSV;
+			} else if (strcmp(termBuffer + 2, "VTG") == 0) {
+				curSentenceType = SentenceType_VTG;
+			} else {
+				curSentenceType = SentenceType_Other;
+			}
+			for (customCandidates = customElts; customCandidates != nullptr &&
+				strcmp(customCandidates->sentenceName, termBuffer) < 0;
+				customCandidates = customCandidates->next);
+			if (customCandidates != nullptr && strcmp(customCandidates->sentenceName, termBuffer) > 0) {
+				customCandidates = nullptr;
+			}
+			return false;
 		}
-		for (customCandidates = customElts; customCandidates != NULL &&
-			strcmp(customCandidates->sentenceName, termBuffer) < 0;
-			customCandidates = customCandidates->next);
-		if (customCandidates != NULL && strcmp(customCandidates->sentenceName, termBuffer) > 0) {
-			customCandidates = NULL;
-		}
-		return false;
 	}
 
 	if (curSentenceType != SentenceType_Other && termBuffer[0]) {
@@ -212,13 +256,99 @@ bool GPSNMEA::endOfTermHandler() {
 				default:
 					break;
 			}
+		} else if (curSentenceType == SentenceType_GSA) {
+			switch(curTermNumber) {
+				case 1:
+					if (termBuffer[0] != '\0')
+						gsa.mode = termBuffer[0];
+					break;
+				case 2:
+					gsa.fixType = atoi(termBuffer);
+					break;
+				case 3: case 4: case 5: case 6:
+				case 7: case 8: case 9: case 10:
+				case 11: case 12: case 13: case 14: {
+					int index = curTermNumber - 3;
+					if (index >= 0 && index < 12)
+						gsa.satPrn[index] = atoi(termBuffer);
+					break;
+				}
+				case 15:
+					gsa.pdop = atof(termBuffer);
+					break;
+				case 16:
+					gsa.hdop = atof(termBuffer);
+					break;
+				case 17:
+					gsa.vdop = atof(termBuffer);
+					break;
+				default:
+					break;
+			}
+		} else if (curSentenceType == SentenceType_GSV) {
+			switch(curTermNumber) {
+				case 1:
+					gsv.totalMessages = atoi(termBuffer);
+					break;
+				case 2:
+					gsv.messageNumber = atoi(termBuffer);
+					break;
+				case 3:
+					gsv.satellitesInView = atoi(termBuffer);
+					break;
+				default: {
+					int fieldIndex = curTermNumber - 4;
+					int satIndex = fieldIndex / 4;
+					int field = fieldIndex % 4;
+					if (satIndex < 4) {
+						switch (field) {
+							case 0:
+								gsv.satellites[satIndex].prn = atoi(termBuffer);
+								break;
+							case 1:
+								gsv.satellites[satIndex].elevation = atoi(termBuffer);
+								break;
+							case 2:
+								gsv.satellites[satIndex].azimuth = atoi(termBuffer);
+								break;
+							case 3:
+								gsv.satellites[satIndex].snr = atoi(termBuffer);
+								break;
+						}
+					}
+					break;
+				}
+			}
+		} else if (curSentenceType == SentenceType_VTG) {
+			switch(curTermNumber) {
+				case 1:
+					vtg.trueTrack = atof(termBuffer);
+					break;
+				case 2:
+					break;
+				case 3:
+					vtg.magneticTrack = atof(termBuffer);
+					break;
+				case 4:
+					break;
+				case 5:
+					vtg.speedKnots = atof(termBuffer);
+					break;
+				case 6:
+					break;
+				case 7:
+					vtg.speedKmph = atof(termBuffer);
+					break;
+				case 8:
+					break;
+				default:
+					break;
+			}
 		}
 	}
 
-	for (GPSCustom *p = customCandidates;
-	p != NULL && strcmp(p->sentenceName, customCandidates->sentenceName) == 0 &&
-	p->termNumber <= curTermNumber;
-	p = p->next) {
+	for (GPSCustom *p = customCandidates; p != nullptr && strcmp(p->sentenceName, customCandidates->sentenceName) == 0 &&
+	p->termNumber <= curTermNumber; p = p->next) {
 		if (p->termNumber == curTermNumber) {
 			p->set(termBuffer);
 		}
@@ -226,9 +356,8 @@ bool GPSNMEA::endOfTermHandler() {
 	return false;
 }
 
-//
-// GPSLocation の実装
-//
+// --- 以下、各サブクラスの実装 ---
+
 void GPSLocation::setLatitude(const char *term) {
 	gpsParseDegrees(term, rawNewLatData);
 }
@@ -252,11 +381,8 @@ double GPSLocation::lng() {
 	return rawLngData.negative ? -ret : ret;
 }
 
-//
-// GPSTime の実装
-//
 void GPSTime::setTime(const char *term) {
-	newTime = (uint32_t)gpsParseDecimal(term);
+	newTime = static_cast<uint32_t>(gpsParseDecimal(term));
 }
 void GPSTime::commit() {
 	time = newTime;
@@ -280,9 +406,6 @@ uint8_t GPSTime::centisecond() {
 	return time % 100;
 }
 
-//
-// GPSDate の実装
-//
 void GPSDate::setDate(const char *term) {
 	newDate = atol(term);
 }
@@ -305,9 +428,6 @@ uint8_t GPSDate::day() {
 	return date / 10000;
 }
 
-//
-// GPSDecimal の実装
-//
 void GPSDecimal::set(const char *term) {
 	newval = gpsParseDecimal(term);
 }
@@ -317,9 +437,6 @@ void GPSDecimal::commit() {
 	valid = updated = true;
 }
 
-//
-// GPSInteger の実装
-//
 void GPSInteger::set(const char *term) {
 	newval = atol(term);
 }
@@ -329,9 +446,6 @@ void GPSInteger::commit() {
 	valid = updated = true;
 }
 
-//
-// GPSCustom の実装
-//
 GPSCustom::GPSCustom(GPSNMEA &gps, const char *sentenceName, int termNumber) {
 	begin(gps, sentenceName, termNumber);
 }
@@ -353,12 +467,9 @@ void GPSCustom::set(const char *term) {
 	strncpy(stagingBuffer, term, sizeof(stagingBuffer) - 1);
 }
 
-//
-// GPSNMEA 内部：カスタムフィールド登録
-//
 void GPSNMEA::insertCustom(GPSCustom *pElt, const char *sentenceName, int termNumber) {
 	GPSCustom **ppElt;
-	for (ppElt = &customElts; *ppElt != NULL; ppElt = &((*ppElt)->next)) {
+	for (ppElt = &customElts; *ppElt != nullptr; ppElt = &((*ppElt)->next)) {
 		int cmp = strcmp(sentenceName, (*ppElt)->sentenceName);
 		if (cmp < 0 || (cmp == 0 && termNumber < (*ppElt)->termNumber))
 			break;

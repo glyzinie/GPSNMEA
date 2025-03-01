@@ -1,5 +1,8 @@
 #include "GPSUtils.hpp"
-#include <stdlib.h>
+#include <Arduino.h>
+#include <cstdlib>
+#include <cctype>
+#include <cmath>
 
 int gpsFromHex(char a) {
 	if (a >= 'A' && a <= 'F') {
@@ -16,13 +19,13 @@ int32_t gpsParseDecimal(const char *term) {
 	if (negative) {
 		++term;
 	}
-	int32_t ret = 100 * (int32_t)atol(term);
-	while (isdigit(*term)) {
+	int32_t ret = 100 * static_cast<int32_t>(std::atol(term));
+	while (std::isdigit(*term)) {
 		++term;
 	}
-	if (*term == '.' && isdigit(term[1])) {
+	if (*term == '.' && std::isdigit(term[1])) {
 		ret += 10 * (term[1] - '0');
-		if (isdigit(term[2])) {
+		if (std::isdigit(term[2])) {
 			ret += (term[2] - '0');
 		}
 	}
@@ -30,16 +33,16 @@ int32_t gpsParseDecimal(const char *term) {
 }
 
 void gpsParseDegrees(const char *term, RawDegrees &deg) {
-	uint32_t leftOfDecimal = (uint32_t)atol(term);
-	uint16_t minutes = (uint16_t)(leftOfDecimal % 100);
+	uint32_t leftOfDecimal = static_cast<uint32_t>(std::atol(term));
+	uint16_t minutes = static_cast<uint16_t>(leftOfDecimal % 100);
 	uint32_t multiplier = 10000000UL;
 	uint32_t tenMillionths = minutes * multiplier;
 	deg.deg = leftOfDecimal / 100;
-	while (isdigit(*term)) {
+	while (std::isdigit(*term)) {
 		++term;
 	}
 	if (*term == '.') {
-		while (isdigit(*++term)) {
+		while (std::isdigit(*++term)) {
 			multiplier /= 10;
 			tenMillionths += (*term - '0') * multiplier;
 		}
@@ -50,11 +53,11 @@ void gpsParseDegrees(const char *term, RawDegrees &deg) {
 }
 
 double gpsDistanceBetween(double lat1, double lon1, double lat2, double lon2) {
-	double delta = radians(lon1 - lon2);
+	double delta = toRadians(lon1 - lon2);
 	double sdlon = sin(delta);
 	double cdlon = cos(delta);
-	lat1 = radians(lat1);
-	lat2 = radians(lat2);
+	lat1 = toRadians(lat1);
+	lat2 = toRadians(lat2);
 	double slat1 = sin(lat1);
 	double clat1 = cos(lat1);
 	double slat2 = sin(lat2);
@@ -69,9 +72,9 @@ double gpsDistanceBetween(double lat1, double lon1, double lat2, double lon2) {
 }
 
 double gpsCourseTo(double lat1, double lon1, double lat2, double lon2) {
-	double dlon = radians(lon2 - lon1);
-	lat1 = radians(lat1);
-	lat2 = radians(lat2);
+	double dlon = toRadians(lon2 - lon1);
+	lat1 = toRadians(lat1);
+	lat2 = toRadians(lat2);
 	double a1 = sin(dlon) * cos(lat2);
 	double a2 = sin(lat1) * cos(lat2) * cos(dlon);
 	a2 = cos(lat1) * sin(lat2) - a2;
@@ -79,7 +82,7 @@ double gpsCourseTo(double lat1, double lon1, double lat2, double lon2) {
 	if (a2 < 0.0) {
 		a2 += TWO_PI;
 	}
-	return degrees(a2);
+	return toDegrees(a2);
 }
 
 const char* gpsCardinal(double course) {
@@ -87,6 +90,6 @@ const char* gpsCardinal(double course) {
 		"N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
 		"S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"
 	};
-	int index = (int)((course + 11.25) / 22.5);
+	int index = static_cast<int>((course + 11.25) / 22.5);
 	return directions[index % 16];
 }
